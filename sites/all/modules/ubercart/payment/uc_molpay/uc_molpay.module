@@ -1,0 +1,211 @@
+<?php
+
+/**
+ * @file
+ * Integrates molpay.com redirected payment service.
+ */
+
+
+
+/**
+ * Implements hook_menu().
+ */
+function uc_molpay_menu() {
+  $items = array();
+
+  $items['cart/molpay/complete'] = array(
+    'title' => 'Order complete',
+    'page callback' => 'uc_molpay_complete',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+    'file' => 'uc_molpay.pages.inc',
+  );
+
+  $items['cart/molpay/callback'] = array(
+    'title' => 'Order callback',
+    'page callback' => 'uc_molpay_callback',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+    'file' => 'uc_molpay.pages.inc',
+  );
+  
+  $items['cart/molpay/notification'] = array(
+    'title' => 'Order notification',
+    'page callback' => 'uc_molpay_notification',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+    'file' => 'uc_molpay.pages.inc',
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_init().
+ */
+function uc_molpay_init() {
+  global $conf;
+  $conf['i18n_variables'][] = 'uc_molpay_method_title';
+}
+
+/**
+ * Implements hook_ucga_display().
+ */
+function uc_molpay_ucga_display() {
+  // Tell UC Google Analytics to display the e-commerce JS on the custom
+  // order completion page for this module.
+  if (arg(0) == 'cart' && arg(1) == 'molpay' && arg(2) == 'complete') {
+    return TRUE;
+  }
+}
+
+/**
+ * Implements hook_uc_payment_method().
+ *
+ * @see uc_payment_method_molpay()
+ */
+function uc_molpay_uc_payment_method() {
+  $path = base_path() . drupal_get_path('module', 'uc_molpay');
+  $title = variable_get('uc_molpay_method_title', t('Credit card on a secure server:'));
+  $title .= '<br />' . theme('image', array(
+    'path' => drupal_get_path('module', 'uc_molpay') . '/molpay_logo.png',
+    'attributes' => array('class' => array('uc-molpay-logo')),
+  ));
+
+  $methods['molpay'] = array(
+    'name' => t('molpay'),
+    'title' => $title,
+    'review' => variable_get('uc_molpay_check', FALSE) ? t('Credit card/eCheck') : t('Credit card'),
+    'desc' => t('Redirect to molpay to pay by credit card or eCheck.'),
+    'callback' => 'uc_payment_method_molpay',
+    'redirect' => 'uc_molpay_form',
+    'weight' => 3,
+    'checkout' => TRUE,
+    'no_gateway' => TRUE,
+  );
+
+  return $methods;
+}
+
+/**
+ * Adds molpay settings to the payment method settings form.
+ *
+ * @see uc_molpay_uc_payment_method()
+ */
+function uc_payment_method_molpay($op, &$order, $form = NULL, &$form_state = NULL) {
+  switch ($op) {
+    case 'cart-details':
+      $build = array();
+
+      if (variable_get('uc_molpay_check', FALSE)) {
+        $build['pay_method'] = array(
+          '#type' => 'select',
+          '#title' => t('Select your payment type:'),
+          '#default_value' => $_SESSION['pay_method'] == 'CK' ? 'CK' : 'CC',
+          '#options' => array(
+            'CC' => t('Credit card'),
+            'CK' => t('Online check'),
+          ),
+        );
+        unset($_SESSION['pay_method']);
+      }
+
+      return $build;
+
+    case 'cart-process':
+      if (isset($form_state['values']['panes']['payment']['details']['pay_method'])) {
+        $_SESSION['pay_method'] = $form_state['values']['panes']['payment']['details']['pay_method'];
+      }
+      return;
+
+    case 'settings':
+      $form['uc_molpay_sid'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Merchant ID'),
+        '#description' => t('Your MOLPay Merchant ID.'),
+        '#default_value' => variable_get('uc_molpay_sid', ''),
+        '#size' => 50,
+      );
+      $form['uc_molpay_secret_word'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Verify Key'),
+        '#description' => t('Ypur MOLPay Verify Key.'),
+        '#default_value' => variable_get('uc_molpay_secret_word', ''),
+        '#size' => 50,
+      );
+      $form['uc_molpay_language'] = array(
+        '#type' => 'select',
+        '#title' => t('Language preference'),
+        '#description' => t('Adjust language on molpay pages.'),
+        '#options' => array(
+          'en' => t('English'),
+          'sp' => t('Spanish'),
+        ),
+        '#default_value' => variable_get('uc_molpay_language', 'en'),
+      );
+      return $form;
+  }
+}
+
+/**
+ * Form to build the submission to molpay.com.
+ */
+function uc_molpay_form($form, &$form_state, $order) {
+  $country = uc_get_country_data(array('country_id' => $order->billing_country));
+  if ($country === FALSE) {
+    $country = array(0 => array('country_iso_code_3' => 'USA'));
+  }
+  
+  $desc = array();
+  foreach ($order->products as $product) {
+    $desc[] = $product->title;
+  }
+  $bill_desc = implode(',', $desc);
+
+  $data = array(
+    'amount' => uc_currency_format($order->order_total, FALSE, FALSE, '.'),
+    'orderid' => $order->order_id,
+    'lang' => variable_get('uc_molpay_language', 'en'),
+    'bill_name' => drupal_substr($order->billing_first_name . ' ' . $order->billing_last_name, 0, 128),
+    'bill_email' => drupal_substr($order->primary_email, 0, 64),
+    'bill_mobile' => drupal_substr($order->billing_phone, 0, 16),
+    'country' => $country[0]['country_iso_code_3'],
+	'bill_desc' => $bill_desc,
+    'returnurl' => url('cart/molpay/complete/' . uc_cart_get_id(), array('absolute' => TRUE)),
+	'callbackurl' => url('cart/molpay/callback/',array('absolute' => TRUE)),
+	'notificationurl' => url('cart/molpay/notification/',array('absolute' => TRUE)),
+  );
+
+  $acc = variable_get('uc_molpay_sid', '');
+  
+  // vcode = md5(amount . merchant id . order id . verify key)
+  $data['vcode'] = md5($data['amount'] . $acc . $data['orderid'] . variable_get('uc_molpay_secret_word', ''));
+   
+
+  $form['#action'] = _uc_molpay_post_url(variable_get('uc_molpay_checkout_type', 'multi'));
+
+  foreach ($data as $name => $value) {
+    $form[$name] = array('#type' => 'hidden', '#value' => $value);
+  }
+
+  $form['actions'] = array('#type' => 'actions');
+  $form['actions']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Submit order'),
+  );
+
+  return $form;
+}
+
+/**
+ * Helper function to obtain molpay URL for a transaction.
+ */
+function _uc_molpay_post_url($type) {
+$acc = variable_get('uc_molpay_sid', '');
+  switch ($type) {
+    case 'single':
+      return 'https://www.onlinepayment.com.my/MOLPay/pay/'.$acc.'/';
+    case 'multi':
+    default:
+      return 'https://www.onlinepayment.com.my/MOLPay/pay/'.$acc.'/';
+  }
+}
