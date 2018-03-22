@@ -37,7 +37,8 @@ Installations for Drupal Ubercart 7.x.3.x and above
 12. Under Verify Key enter your **MOLPay Merchant Verify Key** .
 13. Select your checkout page language.
 14. Click **Save Configuration**.
-15. Click on the MERCHANT PROFILE menu. Fill in return URL and Callback URL with your shopping cart URL.
+15. Log into your merchant account at https://portal.molpay.com . Click Transaction > Transaction Settings > Endpoint setting.
+16. Fill in Callback URL with your shopping cart URL.
   
   ``Return URL : http://xxxxxxxxxxxxxx/cart/molpay/complete``
 
